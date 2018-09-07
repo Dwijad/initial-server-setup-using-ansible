@@ -1,0 +1,140 @@
+---
+- hosts: MyVPS
+  become: yes
+  become_method: sudo
+
+  tasks:
+  - include_vars: users.yml
+
+  - name: Update and Upgrade my VPS to the latest
+    become: true
+    
+    apt:
+      upgrade: dist
+
+  - name: Install the `sudo` package
+    package:
+       name: sudo
+       state: latest
+
+  - name: Add users
+    user: name={{ item }} group=users groups=sudo
+
+    with_items:
+        - ansible
+        - user1
+        - user2
+        - user3
+
+  - name: Allow users in sudo group to have passwordless login
+    lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^%sudo'
+        line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+
+  - name: Add users to sudo group
+    user: name={{ item }} groups=sudo append=yes state=present createhome=yes
+
+    with_items:
+        - ansible
+        - user1
+        - user2
+        - user3
+
+  - name: Placing SSH Key to Authorized Key in remote VPS
+    authorized_key: user="{{item.username}}" key="{{ lookup('file', '/home/dwijadas/.ssh/id_rsa.{{ item.username }}.pub')}}"
+    with_items: "{{ users }}"
+    
+  - name: Disallow password authentication
+    lineinfile: dest=/etc/ssh/sshd_config
+                  regexp="^PasswordAuthentication"
+                  line="PasswordAuthentication no"
+                  state=present
+ 
+  - name: Disable root login
+    lineinfile: dest=/etc/ssh/sshd_config
+                  regexp="^PermitRootLogin"
+                  line="PasswordAuthentication yes"
+                  state=present
+
+  - name: Placing SSH Key to Authorized Key in remote VPS
+    authorized_key: user="{{item.username}}" key="{{ lookup('file', '/home/dwijadas/.ssh/id_rsa.{{ item.username }}.pub')}}"
+    with_items: "{{ users }}"
+
+  - name: Restart ssh
+    service: name=ssh state=restarted
+
+  - name: Add Docker GPG key
+    apt_key: url=https://download.docker.com/linux/ubuntu/gpg
+
+  - name: Add Docker APT repository
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ansible_distribution_release}} stable
+
+  - name: Install list of packages
+    apt:
+      name: "{{ item }}"
+      state: present
+      update_cache: yes
+    with_items:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+      - docker-ce
+
+  - name: add all users to docker group
+    command: sudo usermod -aG docker {{ item.username }}
+    with_items: "{{ users }}"
+
+  - name: Install docker-compose
+    get_url: 
+      url : https://github.com/docker/compose/releases/download/1.22.0/docker-compose-Linux-x86_64
+      dest: /usr/local/bin/docker-compose
+      mode: 'u+x,g+x'
+
+  - name: install UFW - Uncomplicated Firewall
+    apt: name=ufw state=latest update_cache=yes
+
+  - name: set logging
+    ufw: logging=on
+
+  - name: allow port 22
+    ufw: rule=allow port=22
+
+  - name: allow port 80
+    ufw: rule=allow port=80
+
+  - name: enable ufw
+    ufw: state=enabled policy=allow
+
+  - name: install rsync
+    apt: name="rsync" state="present"
+  
+  - name: "Automated security updates"
+    apt: name=unattended-upgrades state=present
+
+  - file: path=/etc/apt/apt.conf.d/10periodic state=absent
+
+  - blockinfile:
+       dest: /etc/apt/apt.conf.d/10periodic
+       create: yes
+       block: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "1";
+
+  - blockinfile:
+       dest: /etc/apt/apt.conf.d/50unattended-upgrades
+       create: yes
+       block: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+          };
+          Unattended-Upgrade::Package-Blacklist {
+              "vim";
+              "nginx";
+              "mariadb-server";
+          };
