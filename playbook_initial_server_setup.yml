@@ -17,6 +17,85 @@
        name: sudo
        state: latest
 
+  - name: Add Docker GPG key
+    apt_key: url=https://download.docker.com/linux/ubuntu/gpg
+
+  - name: Add Docker APT repository
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ansible_distribution_release}} stable
+
+  - name: Install the prerequisite packages
+    package:
+       name: "{{ item }}"
+       state: latest
+    with_items:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+
+  - name: Update apt cache.
+    apt: update_cache=true
+    become: true
+
+  - name: Install Docker
+    apt:
+      name: docker-ce
+      state: present
+      update_cache: yes
+
+
+
+  - name: Install docker-compose
+    get_url:
+      url : https://github.com/docker/compose/releases/download/1.22.0/docker-compose-Linux-x86_64
+      dest: /usr/local/bin/docker-compose
+      mode: 'u+x,g+x'
+
+  - name: install UFW - Uncomplicated Firewall
+    apt: name=ufw state=latest update_cache=yes
+
+  - name: set logging
+    ufw: logging=on
+
+  - name: allow port 22/80
+    ufw: rule=allow port= "{{ item }}"
+    with_items:
+       - 22
+       - 80
+ 
+  - name: enable ufw
+    ufw: state=enabled policy=allow
+
+  - name: install rsync
+    apt: name="rsync" state="present"
+  
+  - name: "Automated security updates"
+    apt: name=unattended-upgrades state=present
+
+  - file: path=/etc/apt/apt.conf.d/10periodic state=absent
+
+  - blockinfile:
+       dest: /etc/apt/apt.conf.d/10periodic
+       create: yes
+       block: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "1";
+
+  - blockinfile:
+       dest: /etc/apt/apt.conf.d/50unattended-upgrades
+       create: yes
+       block: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+          };
+          Unattended-Upgrade::Package-Blacklist {
+              "vim";
+              "nginx";
+              "mariadb-server";
+          };
   - name: Add users
     user: name={{ item }} group=users groups=sudo
 
@@ -25,6 +104,10 @@
         - user1
         - user2
         - user3
+
+  - name: add all users to docker group
+    command: sudo usermod -aG docker {{ item.username }}
+    with_items: "{{ users }}"
 
   - name: Allow users in sudo group to have passwordless login
     lineinfile:
@@ -64,77 +147,3 @@
 
   - name: Restart ssh
     service: name=ssh state=restarted
-
-  - name: Add Docker GPG key
-    apt_key: url=https://download.docker.com/linux/ubuntu/gpg
-
-  - name: Add Docker APT repository
-    apt_repository:
-      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ansible_distribution_release}} stable
-
-  - name: Install list of packages
-    apt:
-      name: "{{ item }}"
-      state: present
-      update_cache: yes
-    with_items:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - software-properties-common
-      - docker-ce
-
-  - name: add all users to docker group
-    command: sudo usermod -aG docker {{ item.username }}
-    with_items: "{{ users }}"
-
-  - name: Install docker-compose
-    get_url: 
-      url : https://github.com/docker/compose/releases/download/1.22.0/docker-compose-Linux-x86_64
-      dest: /usr/local/bin/docker-compose
-      mode: 'u+x,g+x'
-
-  - name: install UFW - Uncomplicated Firewall
-    apt: name=ufw state=latest update_cache=yes
-
-  - name: set logging
-    ufw: logging=on
-
-  - name: allow port 22
-    ufw: rule=allow port=22
-
-  - name: allow port 80
-    ufw: rule=allow port=80
-
-  - name: enable ufw
-    ufw: state=enabled policy=allow
-
-  - name: install rsync
-    apt: name="rsync" state="present"
-  
-  - name: "Automated security updates"
-    apt: name=unattended-upgrades state=present
-
-  - file: path=/etc/apt/apt.conf.d/10periodic state=absent
-
-  - blockinfile:
-       dest: /etc/apt/apt.conf.d/10periodic
-       create: yes
-       block: |
-          APT::Periodic::Update-Package-Lists "1";
-          APT::Periodic::Download-Upgradeable-Packages "1";
-          APT::Periodic::AutocleanInterval "7";
-          APT::Periodic::Unattended-Upgrade "1";
-
-  - blockinfile:
-       dest: /etc/apt/apt.conf.d/50unattended-upgrades
-       create: yes
-       block: |
-          Unattended-Upgrade::Allowed-Origins {
-              "${distro_id}:${distro_codename}-security";
-          };
-          Unattended-Upgrade::Package-Blacklist {
-              "vim";
-              "nginx";
-              "mariadb-server";
-          };
